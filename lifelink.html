@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LIFELINK Chatbot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js" type="module"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js" type="module"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js" type="module"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #e5e7eb;
+        }
+        .typing-indicator span {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background-color: #4a5568;
+            border-radius: 50%;
+            margin: 0 2px;
+            animation: bounce 0.8s infinite ease-in-out;
+        }
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-8px); }
+        }
+        .bot-message h2 {
+            font-weight: 600; /* semibold */
+            color: #059669; /* darker green */
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+    <div id="app" class="flex flex-col w-full max-w-2xl bg-white rounded-xl shadow-2xl overflow-hidden h-[90vh]">
+        <!-- Header with professional theme and creative name -->
+        <header class="bg-[#10b981] text-white p-6 flex items-center justify-between shadow-xl">
+            <div class="flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M12 20.354l-6.5-6.5A5 5 0 0112 5a5 5 0 016.5 6.5L12 20.354z" />
+                </svg>
+                <div>
+                    <h1 class="text-2xl font-bold">LIFELINK</h1>
+                    <p class="text-sm opacity-80">Your Partner in Wellness</p>
+                </div>
+            </div>
+            <div class="text-xs opacity-75 truncate" id="userIdDisplay">Authenticating...</div>
+        </header>
+
+        <!-- Message Display Area -->
+        <div id="messagesContainer" class="flex-1 p-6 space-y-4 overflow-y-auto bg-gray-100">
+            <!-- Disclaimer and Emergency Tips -->
+            <div class="bg-yellow-500 text-white p-3 rounded-xl shadow-md space-y-2 mb-2">
+                <div class="flex items-center space-x-2 font-bold text-base">
+                    <span class="text-xl">⚠️</span>
+                    <span>IMPORTANT HEALTH DISCLAIMER</span>
+                </div>
+                <p class="text-sm opacity-90">
+                    LIFELINK is an AI health assistant and is **not a substitute for professional medical advice**, diagnosis, or treatment. Always seek the advice of a qualified healthcare provider for any medical questions.
+                </p>
+                <p class="text-sm opacity-90">
+                    If you think you may have a medical emergency, call your local emergency services or a doctor immediately.
+                </p>
+            </div>
+
+            <div class="bg-red-500 text-white p-3 rounded-xl shadow-md space-y-2 mb-2">
+                <div class="flex items-center space-x-2 font-bold text-base">
+                    <span class="text-xl">🚨</span>
+                    <span>EMERGENCY SAFETY TIPS</span>
+                </div>
+                <ul class="list-disc list-inside text-sm opacity-90">
+                    <li>**Call for Help:** In a medical emergency, call your local emergency services (e.g., 911, 112) right away.</li>
+                    <li>**Stay Calm:** Take a deep breath and stay as calm as possible to think clearly.</li>
+                    <li>**Stop Bleeding:** If applicable, apply direct pressure to any wound to help control bleeding.</li>
+                </ul>
+            </div>
+            <!-- Messages will be dynamically added here -->
+        </div>
+
+        <!-- Message Input Form -->
+        <form id="messageForm" class="p-4 bg-white flex items-center shadow-lg">
+            <input type="text" id="messageInput" placeholder="How can I help you today?" class="flex-1 p-3 rounded-full border border-gray-300 focus:outline-none focus:ring-2 focus:ring-[#10b981] transition-all duration-200" required>
+            <button type="submit" class="ml-3 p-3 bg-[#10b981] text-white rounded-full hover:bg-[#059669] transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:ring-offset-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                </svg>
+            </button>
+        </form>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Global variables for Firebase
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // --- Firebase Initialization and Authentication ---
+        let app, auth, db;
+        let userId = null;
+
+        const userIdDisplay = document.getElementById('userIdDisplay');
+        const messageForm = document.getElementById('messageForm');
+        const messageInput = document.getElementById('messageInput');
+        const messagesContainer = document.getElementById('messagesContainer');
+        const apiKey = "";
+        
+        try {
+            if (Object.keys(firebaseConfig).length === 0) {
+                console.error("Firebase config is missing. Please provide the firebase config.");
+            } else {
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        userIdDisplay.textContent = `User ID: ${userId}`;
+                        console.log("User authenticated:", userId);
+                        await setupRealtimeChat();
+                    } else {
+                        // Sign in anonymously if no token is available, for testing
+                        if (initialAuthToken) {
+                            try {
+                                await signInWithCustomToken(auth, initialAuthToken);
+                            } catch (error) {
+                                console.error("Error signing in with custom token:", error);
+                                await signInAnonymously(auth);
+                            }
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    }
+                });
+            }
+        } catch (error) {
+            console.error("Failed to initialize Firebase:", error);
+        }
+
+        // --- Core Chatbot Logic (Knowledge Base) ---
+        const DISEASE_DATA = {
+            "dengue": {
+                name: "Dengue Fever", emoji: "🦟",
+                symptoms: "High fever (104°F or 40°C), severe headache, pain behind the eyes, joint and muscle aches, skin rash, and mild bleeding from the gums or nose. Symptoms typically last for 2-7 days.",
+                prevention: "To prevent dengue, it is essential to protect yourself from mosquito bites. Use mosquito repellents, wear long-sleeved shirts and pants, and ensure your home has screens on windows and doors. Remove standing water from flower pots, buckets, and old tires to eliminate mosquito breeding grounds.",
+                management: "Rest and stay hydrated with plenty of water and oral rehydration salts. Use acetaminophen (paracetamol) to control fever and relieve pain. **Avoid NSAIDs like ibuprofen or aspirin**, as they can increase the risk of bleeding. Monitor for warning signs.",
+                whenToSeeDoctor: "Seek immediate medical attention if you experience severe abdominal pain, persistent vomiting, rapid breathing, bleeding from the nose or gums, fatigue, or irritability. These are signs of severe dengue, which is a medical emergency."
+            },
+            "flu": {
+                name: "Influenza (Flu)", emoji: "🤒",
+                symptoms: "Fever, chills, muscle aches, cough, sore throat, and fatigue. Some people may also experience headaches and a runny or stuffy nose.",
+                prevention: "The most effective way to prevent the flu is to get an annual flu vaccine. Additionally, practice good hygiene by washing your hands frequently with soap and water, avoiding touching your face, and staying away from sick people.",
+                management: "Rest and drink plenty of fluids to stay hydrated. You can use over-the-counter medications like acetaminophen or ibuprofen for fever and pain relief. A humidifier or saline nasal spray can help with congestion.",
+                whenToSeeDoctor: "Consult a doctor if you have a high fever that lasts more than 3-4 days, difficulty breathing, chest pain, dizziness, or a worsening of symptoms after they initially improve. These could be signs of a complication, such as pneumonia."
+            },
+            "cold": {
+                name: "Common Cold", emoji: "🤧",
+                symptoms: "A common cold usually begins with a sore throat, followed by a runny or stuffy nose and sneezing. Other symptoms may include a cough, congestion, and mild fatigue.",
+                prevention: "Regular hand-washing is the best way to prevent a cold. Avoid close contact with people who are sick and clean frequently touched surfaces like doorknobs and faucets.",
+                management: "Since a cold is a virus, antibiotics will not help. Manage symptoms with rest and hydration. Over-the-counter remedies like saline nasal spray, throat lozenges, and decongestants can provide relief.",
+                whenToSeeDoctor: "See a doctor if your symptoms do not improve after 7-10 days, you have a high fever, severe headache, or if you experience unusual symptoms like chest pain or shortness of breath."
+            },
+            "fracture": {
+                name: "Fracture (Broken Bone)", emoji: "🦴",
+                symptoms: "Intense pain that worsens with movement, swelling, bruising, a visible deformity, and an inability to bear weight on the affected limb.",
+                prevention: "Practice safety in high-risk activities, wear protective gear, and maintain a healthy diet rich in calcium and vitamin D to support bone strength.",
+                management: "**Do not attempt to move the person or the limb.** Immobilize the area with a splint if trained, apply a cold pack to reduce swelling, and elevate the limb if possible. **Seek immediate medical care.**",
+                whenToSeeDoctor: "A fracture is a medical emergency. **Seek immediate medical attention.**"
+            },
+            "headache": {
+                name: "Headache", emoji: "🤯",
+                symptoms: "Pain or throbbing in the head, which can vary in intensity and location. Can be accompanied by sensitivity to light or sound.",
+                prevention: "Stay hydrated, get enough sleep, manage stress, and identify and avoid triggers like certain foods or loud noises.",
+                management: "Over-the-counter pain relievers like ibuprofen or acetaminophen, rest in a dark, quiet room, and apply a cold compress to the forehead.",
+                whenToSeeDoctor: "If you experience a sudden, severe headache, a headache after a head injury, or a headache accompanied by fever, stiff neck, confusion, or a seizure, seek medical attention immediately."
+            },
+            "strep throat": {
+                name: "Strep Throat", emoji: "🤒",
+                symptoms: "Sudden sore throat, pain when swallowing, fever, red and swollen tonsils often with white patches, tiny red spots on the roof of the mouth, and swollen lymph nodes in the neck.",
+                prevention: "Practice good hygiene. Wash your hands frequently, avoid sharing food and drinks, and cover your mouth when coughing or sneezing.",
+                management: "Strep throat is a bacterial infection that requires antibiotics prescribed by a doctor. Complete the full course of medication even if you feel better. Gargle with warm salt water and drink warm liquids to soothe your throat.",
+                whenToSeeDoctor: "If you suspect strep throat, see a doctor for a proper diagnosis and treatment with antibiotics. Untreated strep can lead to serious complications."
+            },
+            "food poisoning": {
+                name: "Food Poisoning", emoji: "🤢",
+                symptoms: "Nausea, vomiting, watery diarrhea, and abdominal cramps. Can also include fever and a general feeling of weakness.",
+                prevention: "Practice safe food handling: wash your hands and surfaces often, separate raw and cooked foods, cook to the right temperature, and refrigerate promptly.",
+                management: "The main focus is to prevent dehydration. Sip on water, clear sodas, and broths. Avoid solid foods until you feel better. Over-the-counter anti-diarrheal medications are not recommended as they can prolong the illness.",
+                whenToSeeDoctor: "Seek medical attention if you have signs of severe dehydration (decreased urination, dizziness), a high fever (above 101.5°F), bloody diarrhea, or symptoms that last more than a few days."
+            },
+            "ear infection": {
+                name: "Ear Infection", emoji: "👂",
+                symptoms: "Ear pain, a feeling of fullness in the ear, fluid draining from the ear, and muffled hearing. Children may also be irritable or have difficulty sleeping.",
+                prevention: "Avoid smoking, manage allergies, and wash hands frequently. For infants, try to feed them in an upright position.",
+                management: "Over-the-counter pain relievers can help. A warm compress on the ear may soothe the pain. In many cases, ear infections resolve on their own, but some may require antibiotics.",
+                whenToSeeDoctor: "See a doctor if the pain is severe, if symptoms last more than a few days, or if you notice any discharge from the ear. A doctor can determine if antibiotics are necessary."
+            },
+            "sprain": {
+                name: "Sprain", emoji: "🩹",
+                symptoms: "Pain, swelling, bruising, and limited mobility of a joint, most commonly in the ankle or wrist.",
+                prevention: "Stretch before physical activity, wear proper footwear, and be mindful of your surroundings to avoid trips and falls.",
+                management: "**R.I.C.E. Protocol:** **R**est the injured joint, **I**ce the area for 15-20 minutes several times a day, use **C**ompression with a bandage, and **E**levate the limb above the heart.",
+                whenToSeeDoctor: "If you cannot bear weight on the joint, the pain is severe, or the area looks deformed, see a doctor to rule out a more serious injury like a fracture."
+            },
+            "allergies": {
+                name: "Allergies", emoji: "🤧",
+                symptoms: "Sneezing, runny or stuffy nose, itchy or watery eyes, and an itchy throat. Can also include skin rashes or hives.",
+                prevention: "Avoid known allergens, use air purifiers, and keep windows closed during high-pollen seasons. Over-the-counter antihistamines can also be used preventatively.",
+                management: "Antihistamines and decongestants can relieve symptoms. Nasal sprays and eye drops can also be effective. For skin rashes, a hydrocortisone cream may help.",
+                whenToSeeDoctor: "If you have severe symptoms like difficulty breathing, swelling of the tongue or throat, or a feeling of a lump in your throat (anaphylaxis), seek immediate emergency medical care. Otherwise, a doctor can help identify specific allergens and suggest a treatment plan."
+            },
+            "migraine": {
+                name: "Migraine", emoji: "🧠",
+                symptoms: "Intense throbbing pain, usually on one side of the head. Can be accompanied by nausea, vomiting, and extreme sensitivity to light and sound.",
+                prevention: "Identify and avoid triggers (stress, certain foods), maintain a regular sleep schedule, and stay hydrated. A doctor may prescribe preventative medications.",
+                management: "Lie down in a dark, quiet room. Over-the-counter pain relievers can help if taken early. For severe migraines, prescription medication may be needed.",
+                whenToSeeDoctor: "If this is your first migraine, or if the symptoms are unusual, severe, or debilitating, it is best to consult a doctor. This is especially true if you have a headache that is so severe you can't function."
+            },
+            "heat exhaustion": {
+                name: "Heat Exhaustion", emoji: "🥵",
+                symptoms: "Heavy sweating, cold and clammy skin, fast and weak pulse, muscle cramps, dizziness, nausea, and headache. Body temperature is usually normal.",
+                prevention: "Drink plenty of fluids, wear loose-fitting, light-colored clothing, and avoid strenuous activity during the hottest parts of the day.",
+                management: "Move to a cool place, lay down with your feet elevated, and loosen clothing. Sip cool water or a sports drink. A cool shower or compress can also help. If symptoms don't improve in 30 minutes, it can progress to heatstroke.",
+                whenToSeeDoctor: "If symptoms worsen, or if you suspect it has progressed to **heatstroke** (body temperature above 104°F, hot red skin, confusion), seek emergency medical help immediately."
+            },
+            "heartburn": {
+                name: "Heartburn (Acid Reflux)", emoji: "❤️‍🔥",
+                symptoms: "A burning sensation in your chest, often after eating, that may worsen at night or when lying down. Can be accompanied by a bitter or acidic taste in your throat.",
+                prevention: "Avoid trigger foods like spicy or fatty foods, chocolate, and caffeine. Eat smaller meals, don't lie down immediately after eating, and elevate the head of your bed.",
+                management: "Antacids and H2 blockers can provide short-term relief. For frequent heartburn, proton pump inhibitors (PPIs) may be recommended.",
+                whenToSeeDoctor: "If you experience heartburn more than twice a week, if symptoms don't improve with over-the-counter medication, or if you have difficulty swallowing or persistent nausea, a doctor should be consulted. If chest pain is severe or accompanied by shortness of breath, seek emergency care as it could be a sign of a heart attack."
+            },
+            "sunburn": {
+                name: "Sunburn", emoji: "☀️",
+                symptoms: "Red, painful, and hot skin that can become swollen. In severe cases, blisters may form. Can be accompanied by fever, chills, or headache.",
+                prevention: "Limit time in the sun, especially during peak hours. Wear protective clothing, a wide-brimmed hat, and use a broad-spectrum sunscreen with at least SPF 30.",
+                management: "Take a cool shower or bath, apply aloe vera gel or a moisturizer to the affected area, and take over-the-counter pain relievers to reduce pain and inflammation. Drink extra water to prevent dehydration.",
+                whenToSeeDoctor: "Seek medical attention for severe sunburn with extensive blistering, intense pain, or if you experience symptoms of heatstroke like fever, chills, or confusion."
+            },
+            "muscle soreness": {
+                name: "Muscle Soreness (DOMS)", emoji: "💪",
+                symptoms: "Pain, tenderness, and stiffness in the muscles that typically begins 12 to 24 hours after exercise. It is a normal response to physical activity and is not a sign of injury.",
+                prevention: "Gradually increase the intensity of your workouts, and include a proper warm-up and cool-down routine with stretching.",
+                management: "Light activity or stretching can help. Rest and active recovery are key. Applying ice or heat to the sore muscles may also provide relief. Over-the-counter pain relievers can be used if needed.",
+                whenToSeeDoctor: "If the pain is severe and debilitating, lasts for more than a few days, or if you experience significant swelling or a loss of mobility, it could be a sign of a more serious muscle strain or tear. Consult a doctor in such cases."
+            },
+            "diabetes": {
+                name: "Diabetes", emoji: "🩸",
+                symptoms: "Increased thirst and frequent urination, increased hunger, blurred vision, numbness or tingling in the hands or feet, and slow-healing sores.",
+                prevention: "Maintain a healthy weight, eat a balanced diet with reduced sugar, and engage in regular physical activity. Monitoring blood sugar is key for at-risk individuals.",
+                management: "Management involves monitoring blood sugar, taking prescribed medication or insulin, and following a specific diet plan. Regular physical activity is also essential. Always follow a doctor's personalized plan.",
+                whenToSeeDoctor: "If you experience any of the key symptoms of diabetes, it is crucial to see a doctor for a proper diagnosis and a long-term management plan. **Do not attempt to self-diagnose or self-medicate.**"
+            },
+            "hypertension": {
+                name: "Hypertension (High Blood Pressure)", emoji: "🩺",
+                symptoms: "Often called a 'silent killer' because it has no obvious symptoms. In severe cases, it can cause headaches, shortness of breath, or nosebleeds. Regular checkups are the only way to know.",
+                prevention: "Eat a heart-healthy diet low in salt, get regular exercise, maintain a healthy weight, and limit alcohol consumption. Regular blood pressure monitoring is key.",
+                management: "Management often includes lifestyle changes as well as prescribed medication. It is critical to take medication as directed and monitor blood pressure regularly.",
+                whenToSeeDoctor: "See a doctor for a diagnosis and management plan if your blood pressure readings are consistently high. **Seek emergency care if your blood pressure reading is 180/120 mm Hg or higher and you have symptoms of organ damage (e.g., chest pain, shortness of breath, numbness).**"
+            },
+            "asthma": {
+                name: "Asthma", emoji: "😮‍💨",
+                symptoms: "Coughing, wheezing, shortness of breath, and chest tightness. These symptoms can be triggered by exercise, allergens, or cold air.",
+                prevention: "Avoid known triggers and use prescribed long-term control medications as directed. An action plan developed with a doctor is essential.",
+                management: "Use a rescue inhaler for sudden symptoms. For long-term control, use prescribed daily medications. It's important to have an asthma action plan and to know how to use an inhaler correctly.",
+                whenToSeeDoctor: "If symptoms are not responding to a rescue inhaler, if you have trouble speaking, or if your lips or nails turn blue, seek immediate medical attention. For a new diagnosis or to adjust a treatment plan, see a doctor."
+            },
+            "arthritis": {
+                name: "Arthritis", emoji: "🦴",
+                symptoms: "Joint pain, stiffness, swelling, and a decreased range of motion. Symptoms can vary depending on the type of arthritis.",
+                prevention: "Maintain a healthy weight to reduce joint stress, engage in low-impact exercise like swimming or walking, and eat an anti-inflammatory diet.",
+                management: "Pain can be managed with over-the-counter anti-inflammatory drugs. Gentle exercise, hot/cold compresses, and physical therapy can also provide relief. A doctor will determine the best long-term treatment plan.",
+                whenToSeeDoctor: "If joint pain is severe, constant, or debilitating, or if you experience joint deformity, see a doctor for a proper diagnosis and to discuss treatment options."
+            },
+            "gastroenteritis": {
+                name: "Gastroenteritis (Stomach Flu)", emoji: "🤢",
+                symptoms: "Watery diarrhea, abdominal cramps, nausea, vomiting, and a low-grade fever. Symptoms usually appear within 1-3 days of infection.",
+                prevention: "Wash your hands thoroughly and frequently with soap and water, especially after using the bathroom and before eating. Avoid sharing utensils and food with sick people.",
+                management: "The main goal is to prevent dehydration. Sip on clear liquids and oral rehydration solutions. Once vomiting subsides, gradually reintroduce bland foods like crackers, rice, and bananas. Avoid dairy, caffeine, and alcohol.",
+                whenToSeeDoctor: "If you have signs of severe dehydration, a high fever, bloody stool, or if symptoms last for more than a few days, consult a doctor."
+            },
+            "pneumonia": {
+                name: "Pneumonia", emoji: "🤧",
+                symptoms: "Cough, which may produce phlegm, fever, chills, and shortness of breath. You may also experience chest pain when you breathe or cough.",
+                prevention: "Get vaccinated against the flu and pneumococcal pneumonia. Wash your hands frequently, and avoid smoking.",
+                management: "Pneumonia is a serious lung infection that requires a doctor's diagnosis and treatment. Antibiotics are used for bacterial pneumonia, while rest and fluids are key for viral pneumonia. Always follow a doctor's treatment plan.",
+                whenToSeeDoctor: "If you experience any of the symptoms of pneumonia, especially difficulty breathing or a persistent high fever, see a doctor immediately."
+            },
+            "conjunctivitis": {
+                name: "Conjunctivitis (Pink Eye)", emoji: "👀",
+                symptoms: "Redness or swelling of the eye, itching or burning, a gritty feeling, and a watery or thick discharge. Can be caused by a virus, bacteria, or allergies.",
+                prevention: "Wash your hands often, avoid touching your eyes, and do not share eye drops or cosmetics. If you have allergies, control them to prevent flare-ups.",
+                management: "Use a clean, warm compress on the eyes to soothe them. Artificial tears can help with dryness. Avoid wearing contact lenses until the infection clears. Bacterial conjunctivitis requires antibiotic eye drops from a doctor.",
+                whenToSeeDoctor: "If symptoms are severe, you have blurred vision, or if the redness is not improving after a few days, see a doctor for a proper diagnosis and treatment."
+            },
+            "uti": {
+                name: "Urinary Tract Infection (UTI)", emoji: "💧",
+                symptoms: "A strong, persistent urge to urinate, a burning sensation when urinating, passing frequent, small amounts of urine, and cloudy or strong-smelling urine. Pelvic pain may also occur.",
+                prevention: "Drink plenty of water to flush bacteria out of your system, urinate after sexual intercourse, and wipe from front to back to prevent bacteria from entering the urethra.",
+                management: "A UTI is a bacterial infection that requires antibiotics from a doctor. Home care includes drinking lots of water and avoiding irritants like caffeine and alcohol.",
+                whenToSeeDoctor: "If you suspect a UTI, see a doctor promptly. Untreated UTIs can spread to the kidneys and cause more serious complications."
+            },
+            "anxiety": {
+                name: "Anxiety", emoji: "😟",
+                symptoms: "Feeling nervous or restless, a sense of impending danger or panic, increased heart rate, rapid breathing, sweating, and trembling. Can also include difficulty concentrating or sleeping.",
+                prevention: "Practice stress management techniques like meditation and mindfulness. Get regular exercise, maintain a healthy diet, and ensure you get adequate sleep.",
+                management: "For mild cases, relaxation techniques, exercise, and a healthy lifestyle can help. For more severe cases, therapy (like CBT) or medication may be prescribed by a mental health professional.",
+                whenToSeeDoctor: "If anxiety interferes with your daily life, is difficult to control, or is accompanied by other mental health concerns, consult a doctor or a mental health professional."
+            },
+            "depression": {
+                name: "Depression", emoji: "😔",
+                symptoms: "Persistent feelings of sadness or a loss of interest in activities you once enjoyed. Can also include changes in appetite or sleep, fatigue, feelings of worthlessness, and thoughts of self-harm or suicide.",
+                prevention: "Maintaining strong social connections, exercising regularly, and seeking professional help early can prevent depression from worsening.",
+                management: "Management typically involves therapy (psychotherapy) and/or antidepressant medication, as prescribed by a doctor or psychiatrist. Support groups and lifestyle changes are also very helpful.",
+                whenToSeeDoctor: "If you or someone you know is experiencing symptoms of depression, especially thoughts of self-harm, it is critical to seek professional help immediately. Contact a crisis hotline or a doctor."
+            },
+            "sinusitis": {
+                name: "Sinusitis (Sinus Infection)", emoji: "👃",
+                symptoms: "Facial pain or pressure, a stuffy or runny nose, headache, and a reduced sense of smell. Symptoms last for more than a week after a cold.",
+                prevention: "Avoid smoke and allergens, use a humidifier to keep sinuses moist, and wash your hands to prevent viral infections.",
+                management: "For viral sinusitis, home care includes using saline nasal sprays, a humidifier, and pain relievers. Bacterial sinusitis may require antibiotics from a doctor.",
+                whenToSeeDoctor: "If symptoms last more than 10 days, you have a high fever, or if you experience swelling around your eyes, see a doctor as it may be a bacterial infection."
+            },
+            "kidney stones": {
+                name: "Kidney Stones", emoji: "🪨",
+                symptoms: "Severe, sharp pain in the side and back, below the ribs. Pain may radiate to the lower abdomen and groin. Other symptoms include pain on urination, pink or brown urine, and nausea.",
+                prevention: "Stay well-hydrated throughout the day. Reduce intake of salt and animal protein. Your doctor may also recommend dietary changes based on the type of stone you have.",
+                management: "Small stones may pass on their own with a lot of fluid intake. Pain can be managed with over-the-counter pain relievers. Larger stones may require medical procedures to break them up or remove them.",
+                whenToSeeDoctor: "The pain from a kidney stone is often severe enough to warrant immediate medical attention. See a doctor if you suspect a stone, as it's important to rule out other serious conditions."
+            },
+            "eczema": {
+                name: "Eczema (Atopic Dermatitis)", emoji: "🧴",
+                symptoms: "Dry, itchy, red, and inflamed patches of skin. It can appear in different forms and can be triggered by allergens or irritants.",
+                prevention: "Identify and avoid your personal triggers. Use gentle, fragrance-free soaps and moisturizers. Wear soft, cotton clothing to prevent irritation.",
+                management: "Keep the skin well-moisturized. A doctor may prescribe a topical corticosteroid or other creams to reduce inflammation and itching. For severe cases, oral medications or light therapy may be needed.",
+                whenToSeeDoctor: "If the rash is not responding to home care, if the itching is severe enough to disrupt sleep, or if the skin shows signs of infection (e.g., pus), consult a doctor."
+            },
+            "shingles": {
+                name: "Shingles (Herpes Zoster)", emoji: "🔴",
+                symptoms: "Painful, blister-like rash that typically appears as a stripe on one side of the body. Can be accompanied by fever, headache, or general malaise.",
+                prevention: "The best prevention is the shingles vaccine. The CDC recommends it for healthy adults 50 years and older.",
+                management: "Antiviral medications prescribed by a doctor can shorten the duration and severity of the illness. Pain can be managed with over-the-counter pain relievers and cool compresses.",
+                whenToSeeDoctor: "If you suspect you have shingles, see a doctor immediately. Antiviral treatment is most effective if started within 72 hours of the rash's appearance."
+            },
+            "tonsillitis": {
+                name: "Tonsillitis", emoji: "😷",
+                symptoms: "Swollen tonsils that may have white or yellow patches, sore throat, difficulty swallowing, fever, and a scratchy voice.",
+                prevention: "Practice good hygiene, such as frequent hand-washing, and avoid close contact with sick individuals.",
+                management: "For viral tonsillitis, home care includes rest, fluids, and gargling with warm salt water. Bacterial tonsillitis requires antibiotics prescribed by a doctor.",
+                whenToSeeDoctor: "If symptoms are severe, do not improve after a few days, or if you have difficulty breathing or swallowing, see a doctor. It's important to rule out strep throat, which requires antibiotics."
+            },
+            "gout": {
+                name: "Gout", emoji: "🦶",
+                symptoms: "Sudden, severe attacks of pain, swelling, and redness in a joint, most often the big toe. Attacks can come on suddenly, often at night.",
+                prevention: "Limit alcohol, particularly beer, and high-purine foods like red meat and seafood. Drink plenty of water to help your kidneys flush out uric acid.",
+                management: "During an attack, apply ice to the joint and take anti-inflammatory medication. For long-term management, a doctor may prescribe medication to lower uric acid levels.",
+                whenToSeeDoctor: "If you experience a sudden, severe joint attack, see a doctor for a proper diagnosis. Gout is a treatable condition, but requires a doctor's care."
+            },
+            "mononucleosis": {
+                name: "Mononucleosis (Mono)", emoji: "😴",
+                symptoms: "Extreme fatigue, sore throat, fever, swollen lymph nodes in the neck and armpits, and a swollen spleen or liver. It is caused by the Epstein-Barr virus.",
+                prevention: "The virus is spread through saliva, so avoid sharing drinks, food, and kissing with an infected person.",
+                management: "The only treatment is rest, fluids, and over-the-counter pain relievers. Avoid contact sports for at least a month to prevent a ruptured spleen, which is a rare but serious complication.",
+                whenToSeeDoctor: "If you have symptoms of mono, see a doctor for a proper diagnosis. If you experience sharp, sudden pain in your upper left abdomen, seek emergency medical care immediately."
+            },
+            "herpes": {
+                name: "Herpes (Oral/Genital)", emoji: "👄",
+                symptoms: "Outbreaks of painful blisters or sores on the mouth or genitals. Can be preceded by a tingling or burning sensation. The sores typically crust over and heal within a week or two.",
+                prevention: "Avoid contact with an infected person during an active outbreak. Using condoms can reduce the risk of transmission.",
+                management: "Antiviral medications can reduce the frequency, duration, and severity of outbreaks. Pain can be managed with over-the-counter pain relievers.",
+                whenToSeeDoctor: "If you experience a herpes outbreak, see a doctor for a proper diagnosis and to discuss treatment with antiviral medication. If you have symptoms for the first time, it's particularly important to get a diagnosis."
+            }
+        };
+
+        async function getChatbotResponse(userText) {
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+            const keywords = Object.keys(DISEASE_DATA).join(', ');
+            
+            const systemPrompt = `You are a friendly, conversational health assistant. Your purpose is to provide helpful, general information on diseases and health conditions from your knowledge base. If the user asks about a disease in your knowledge base, provide the information in a clear, friendly, and human-like way. Do not just output the raw data. If a user asks about something outside your knowledge base, politely state that you can't help with that specific topic but can provide information on other conditions. Always remind the user that you are not a medical professional and they should consult a doctor for diagnosis and treatment. Your knowledge base includes information on: ${keywords}.`;
+            
+            const payload = {
+                contents: [{ parts: [{ text: userText }] }],
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+            };
+
+            const diseaseInfo = Object.values(DISEASE_DATA).map(info => `**${info.emoji} ${info.name}**\n\n**Symptoms:** ${info.symptoms}\n\n**Prevention:** ${info.prevention}\n\n**Management:** ${info.management}\n\n**When to See a Doctor:** ${info.whenToSeeDoctor}`).join('\n\n---\n\n');
+
+            payload.contents[0].parts.push({ text: `Here is the knowledge base to answer the user's query:\n\n${diseaseInfo}`});
+            
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                const text = result?.candidates?.[0]?.content?.parts?.[0]?.text || "I'm sorry, I couldn't process that request. Please try again.";
+                return text;
+
+            } catch (error) {
+                console.error("Error calling Gemini API:", error);
+                return "I'm sorry, there was a problem getting a response. Please try again later.";
+            }
+        }
+
+        // --- Firestore Interaction and UI Management ---
+        async function sendMessage(text, senderId, senderType = 'user') {
+            if (!db) {
+                console.error("Firestore not initialized.");
+                return;
+            }
+            try {
+                await addDoc(collection(db, `artifacts/${appId}/public/data/messages`), {
+                    text,
+                    senderId,
+                    senderType,
+                    timestamp: serverTimestamp()
+                });
+                console.log("Message sent to Firestore.");
+            } catch (error) {
+                console.error("Error sending message:", error);
+            }
+        }
+        
+        const createMessageElement = (message) => {
+            const isBot = message.senderType === 'bot';
+            const messageClasses = isBot 
+                ? 'bg-gray-200 text-gray-800 self-start rounded-b-xl rounded-tr-xl bot-message'
+                : 'bg-[#10b981] text-white self-end rounded-t-xl rounded-bl-xl';
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `max-w-[80%] p-4 break-words whitespace-pre-wrap shadow-sm ${messageClasses}`;
+
+            // Function to parse the message and specifically style the subheadings
+            function formatBotMessage(text) {
+                // List of subheadings to specifically target
+                const subheadings = ['Symptoms:', 'Prevention:', 'Management:', 'When to See a Doctor:'];
+                let formattedText = text;
+
+                // Replace each subheading with a styled h2 tag
+                subheadings.forEach(heading => {
+                    formattedText = formattedText.replace(new RegExp(`\\*\\*${heading}\\*\\*`, 'g'), `<h2>${heading}</h2>`);
+                });
+                
+                // Return the text with only subheadings formatted
+                return formattedText;
+            }
+
+            if (isBot) {
+                messageDiv.innerHTML = formatBotMessage(message.text);
+            } else {
+                messageDiv.innerHTML = message.text;
+            }
+
+            messagesContainer.appendChild(messageDiv);
+        };
+
+        const createTypingIndicator = () => {
+            const typingDiv = document.createElement('div');
+            typingDiv.id = 'typingIndicator';
+            typingDiv.className = 'flex items-center space-x-1 p-4 bg-gray-200 text-gray-800 self-start rounded-b-xl rounded-tr-xl shadow-sm';
+            typingDiv.innerHTML = `
+                <span class="typing-indicator"></span>
+                <span class="typing-indicator"></span>
+                <span class="typing-indicator"></span>
+                <span class="ml-2 text-sm">LIFELINK is thinking...</span>
+            `;
+            messagesContainer.appendChild(typingDiv);
+            scrollToBottom();
+        };
+
+        const removeTypingIndicator = () => {
+            const indicator = document.getElementById('typingIndicator');
+            if (indicator) {
+                indicator.remove();
+            }
+        };
+
+        const scrollToBottom = () => {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        };
+
+        const setupRealtimeChat = async () => {
+            if (!db) return;
+            const messagesQuery = query(collection(db, `artifacts/${appId}/public/data/messages`), orderBy('timestamp'));
+
+            onSnapshot(messagesQuery, (snapshot) => {
+                let initialLoad = true;
+                if (messagesContainer.children.length > 0) {
+                    initialLoad = false;
+                }
+
+                snapshot.docChanges().forEach((change) => {
+                    if (change.type === 'added') {
+                        const message = change.doc.data();
+                        createMessageElement(message);
+                        if (!initialLoad) {
+                            scrollToBottom();
+                        }
+                    }
+                });
+
+                if (initialLoad) {
+                    scrollToBottom();
+                }
+            });
+        };
+
+        // --- Event Listener ---
+        messageForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const userMessage = messageInput.value.trim();
+            if (userMessage === "" || !userId) {
+                return;
+            }
+            
+            // Clear input and send user message
+            messageInput.value = '';
+            await sendMessage(userMessage, userId, 'user');
+
+            // Show typing indicator while waiting for bot response
+            createTypingIndicator();
+            
+            // Get and send chatbot response
+            const botResponse = await getChatbotResponse(userMessage);
+            removeTypingIndicator();
+            await sendMessage(botResponse, 'chatbot', 'bot');
+        });
+
+    </script>
+</body>
+</html>
